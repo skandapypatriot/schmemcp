@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "Always refer to AGENT_KNOWLEDGE_BASE.md and easyeda_standard_api_architectural_reference.md for rules on EasyEDA API calls.",
+    "Do not guess EasyEDA shape properties—verify against AGENT_KNOWLEDGE_BASE.md first."
+  ],
+  "mcp": {
+    "easyeda-std": {
+      "type": "local",
+      "command": [
+        "C:\\Users\\casmm\\schmemcp\\mcpservervenv\\Scripts\\python.exe",
+        "C:\\Users\\casmm\\schmemcp\\bridge_server.py"
+      ],
+      "enabled": true
+    }
+  }
+}	
