@@ -8,10 +8,10 @@
     "easyeda-std": {
       "type": "local",
       "command": [
-        "C:\\Users\\casmm\\schmemcp\\mcpservervenv\\Scripts\\python.exe",
-        "C:\\Users\\casmm\\schmemcp\\bridge_server.py"
+        "C:\\Users\\PUT_YOUR_USERNAME\\schmemcp\\mcpserverenv\\Scripts\\python.exe",
+        "C:\\Users\\PUT_YOUR_USERNAME\\schmemcp\\bridge_server.py"
       ],
       "enabled": true
     }
   }
-}	
+}

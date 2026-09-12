@@ -93,5 +93,30 @@ Add the following to your Cursor MCP settings (`.cursor/mcp.json` or via the UI)
 ## 5. Troubleshooting
 
 - **Badge shows "Disconnected"**: Ensure `bridge_server.py` is running.
-- **Badge shows "Reconnecting..."**: The WebSocket server is not reachable. Check that port 8765 is not blocked.
+- **Badge shows "Reconnecting..."**: The WebSocket server is not reachable. Check that port **3579** is not blocked (not 8765 — this is the port actually used by `bridge_server.py` and `easyeda-extension/main.js`).
 - **Tool returns browser error**: Ensure the EasyEDA editor tab is fully loaded and active.
+
+## 6. Verified API Notes (edit 2026-09)
+
+Findings verified by probing the live EasyEDA Standard editor (6.5.51) from the browser extension:
+
+- **`place_component` MCP tool is broken.** `bridge_server.py` sends `PLACE_LCSC`, and `easyeda-extension/main.js` calls `api('searchLccComponent', ...)` — **not** a registered EasyEDA method. The guard inside `api()` silently drops unknown names, so no callback ever fires and the MCP request times out after 60 s.
+- Only a subset of EasyEDA `api()` methods are registered in the extension's registry: verified live = `getSource`, `getShape`, `getSelectedIds`, `delete`, `rotate`, `createShape`, `doCommand`. `createShape` is **async** for lib items (returns `undefined`, lands the shape a few seconds later).
+- **Working LCSC placement flow** (verified: placed `C123302` as `gge233`):
+
+  1. `GET https://easyeda.com/api/products/{lcsc}/components?version=6.4.19.5` → `result.uuid` + `result.datastrid` (this endpoint returns only the schematic-symbol item; there is no separate footprint fetch needed for the schematic).
+  2. In the extension context:
+
+     ```js
+     api('createShape', {
+       shapeType: 'schlib',
+       uuid: <uuid>,
+       datastrid: <datastrid>,
+       from: 'system',
+       title: '<lcsc>',
+       x: <px>, y: <px>,     // 1 px = 10 mil
+     });
+     ```
+
+- `createShape` with `from:'EasyEDALibs'` + `title` returns `false` (synchronous) if the title is not resolvable; `from:'system'` + `shortUrl`/`uuid` is the path that works.
+- To confirm placement, read back with `getSource({type:'json'})` and diff `schlib` keys. Canvas origin is top-left; existing title frames may sit at negative Y.
