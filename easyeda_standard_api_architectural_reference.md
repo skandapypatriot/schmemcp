@@ -270,6 +270,8 @@ api("delete", {
 | **Rotate** | `api("rotate", { ids: ["gge1"], degree: 90 })` | Rotates clockwise. |
 | **Flip Horizontal** | `api("fliph", { ids: ["gge1"] })` | Flips selected elements horizontally. |
 | **Flip Vertical** | `api("flipv", { ids: ["gge1"] })` | Flips selected elements vertically. |
+| **Move Relative** | `api("moveObjs", { objs: [{ gId: "gge1" }], addX: 20, addY: -10 })` | Moves shapes by a relative pixel offset (like arrow keys). `objs` accepts an array of `{ gId }` objects or plain gId strings; omitting `objs` moves the current selection. |
+| **Move To** | `api("moveObjsTo", { objs: [{ gId: "gge1" }], x: 200, y: 200 })` | Moves shapes to absolute canvas coordinates. Coordinates are relative to the editor canvas origin (top-left), not the schematic origin cross; read the canvas attributes to resolve the origin if needed. |
 | **Align Left** | `api("align_left", { ids: ["gge1", "gge2"] })` | Aligns left edges. |
 
 ---

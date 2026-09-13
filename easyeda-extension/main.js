@@ -18,6 +18,7 @@ function safeStr(v) {
 }
 
 function sendResponse(reqId, data) {
+  if (_batch) { _batchRecord('success', data, null); return; }
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   try {
     ws.send(JSON.stringify({ req_id: reqId, status: 'success', data: data }));
@@ -27,6 +28,7 @@ function sendResponse(reqId, data) {
 }
 
 function sendError(reqId, errorMsg) {
+  if (_batch) { _batchRecord('error', null, errorMsg); return; }
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   try {
     ws.send(JSON.stringify({ req_id: reqId, status: 'error', error: String(errorMsg) }));
@@ -188,38 +190,83 @@ function nextGid(src) {
   return 'gge' + (max + 1);
 }
 
+function _editorFrame() {
+  var frames = document.querySelectorAll('iframe');
+  for (var i = 0; i < frames.length; i++) {
+    var w = frames[i].contentWindow;
+    try {
+      if (w && w.callCommand && w.callCommand.hooks && w.callCommand.hooks.importShape) {
+        return w;
+      }
+    } catch (e) { /* cross-origin frames are skipped */ }
+  }
+  return null;
+}
+
+function nextWireId(src) {
+  var max = 0, m;
+  var scan = function(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj)) { for (var i = 0; i < obj.length; i++) scan(obj[i]); return; }
+    for (var k in obj) {
+      if (typeof k === 'string' && (m = /^gge_wire(\d+)$/.exec(k))) {
+        var n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+      scan(obj[k]);
+    }
+  };
+  scan(src);
+  return 'gge_wire' + (max + 1);
+}
+
 function handleAddWire(msg) {
   var args = msg.args || {};
-  var x1 = args.x1, y1 = args.y1, x2 = args.x2, y2 = args.y2;
-  log('ADD_WIRE ' + x1 + ',' + y1 + ' -> ' + x2 + ',' + y2);
-  if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) {
-    sendError(msg.req_id, 'missing x1/y1/x2/y2');
+  log('ADD_WIRE ' + safeStr(args).substring(0, 300));
+
+  var pts = null;
+  if (Array.isArray(args.points) && args.points.length >= 2) {
+    pts = args.points.map(function(p) {
+      if (Array.isArray(p)) return { x: p[0], y: p[1] };
+      return { x: p.x, y: p.y };
+    });
+  } else if (args.x1 !== undefined && args.y1 !== undefined &&
+             args.x2 !== undefined && args.y2 !== undefined) {
+    pts = [{ x: args.x1, y: args.y1 }, { x: args.x2, y: args.y2 }];
+  } else {
+    sendError(msg.req_id, 'missing points: pass points=[[x,y],...]/{x,y} array or x1/y1/x2/y2');
     return;
   }
-  try {
-    var src = api('getSource', { type: 'json', compress: false });
-    var gid = nextGid(src);
 
-    var ret = api('createShape', {
-      shapeType: 'wire',
-      jsonCache: {
-        gId: gid,
-        pointArr: [
-          { x: x1, y: y1 },
-          { x: x2, y: y2 }
-        ],
-        strokeColor: '#0000FF',
-        strokeWidth: 2
-      }
-    });
-    log('ADD_WIRE createShape issued gId=' + gid + ' ret=' + safeStr(ret));
+  for (var i = 0; i < pts.length; i++) {
+    if (typeof pts[i].x !== 'number' || typeof pts[i].y !== 'number') {
+      sendError(msg.req_id, 'all points must have numeric x and y');
+      return;
+    }
+  }
+
+  try {
+    var w = _editorFrame();
+    if (!w) {
+      sendError(msg.req_id, 'editor frame with callCommand.hooks.importShape not found');
+      return;
+    }
+    var cc = w.callCommand;
+
+    var src = api('getSource', { type: 'json', compress: false });
+    var gid = nextWireId(src);
+    var ptsStr = pts.map(function(p) { return p.x + ',' + p.y; }).join(' ');
+    var svg = '<polyline points="' + ptsStr + '" stroke="#008800" stroke-width="1" fill="none" c_shapetype="line" c_etype="wire" id="' + gid + '" locked="0"/>';
+
+    cc.hooks.importShape.call(w, svg, {});
+    log('ADD_WIRE importShape issued gId=' + gid);
 
     var after = api('getSource', { type: 'json', compress: false });
     var wireObj = after.wire && after.wire[gid];
     if (wireObj) {
-      sendResponse(msg.req_id, { placed: true, id: gid, gId: gid });
+      sendResponse(msg.req_id, { placed: true, id: gid, gId: gid, pointArr: wireObj.pointArr, wire: true });
     } else {
-      sendResponse(msg.req_id, { placed: true, id: gid, gId: gid, note: 'wire issued but not found in wire container' });
+      sendResponse(msg.req_id, { placed: true, id: gid, gId: gid, note: 'wire imported but not found in wire container' });
     }
   } catch (e) {
     log('ADD_WIRE error: ' + e.stack);
@@ -287,6 +334,146 @@ function handleUpdateNetName(msg) {
   }
 }
 
+function handleMoveObjsTo(msg) {
+  var args = msg.args || {};
+  var gids = Array.isArray(args.gids) ? args.gids
+           : (args.gid !== undefined ? [args.gid] : []);
+  var x = args.x, y = args.y;
+  log('MOVE_OBJS_TO gids=' + safeStr(gids) + ' x=' + x + ' y=' + y);
+  if (!gids.length || x === undefined || y === undefined) {
+    sendError(msg.req_id, 'missing gids or x/y');
+    return;
+  }
+  try {
+    var ret = api('moveObjsTo', {
+      objs: gids.map(function(g) { return { gId: g }; }),
+      x: x,
+      y: y
+    });
+    log('MOVE_OBJS_TO ret=' + safeStr(ret));
+    sendResponse(msg.req_id, { moved: true, gids: gids, x: x, y: y, ret: ret });
+  } catch (e) {
+    sendError(msg.req_id, 'moveObjsTo threw: ' + e.message);
+  }
+}
+
+function handleMoveObjs(msg) {
+  var args = msg.args || {};
+  var gids = args.gids || [];
+  var dx = args.dx !== undefined ? args.dx : 0;
+  var dy = args.dy !== undefined ? args.dy : 0;
+  log('MOVE_OBJS gids=' + safeStr(gids) + ' dx=' + dx + ' dy=' + dy);
+  if (!Array.isArray(gids) || !gids.length) {
+    sendError(msg.req_id, 'missing gids');
+    return;
+  }
+  if (dx === 0 && dy === 0) {
+    sendError(msg.req_id, 'nothing to move: dx=0 and dy=0');
+    return;
+  }
+  try {
+    var ret = api('moveObjs', {
+      objs: gids.map(function(g) { return { gId: g }; }),
+      addX: dx,
+      addY: dy
+    });
+    log('MOVE_OBJS ret=' + safeStr(ret));
+    sendResponse(msg.req_id, { moved: true, gids: gids, dx: dx, dy: dy, ret: ret });
+  } catch (e) {
+    sendError(msg.req_id, 'moveObjs threw: ' + e.message);
+  }
+}
+
+var ACTION_ALIASES = {
+  'PLACE_LCSC': 'PLACE_LCSC', 'place_component': 'PLACE_LCSC',
+  'EXEC_JS': 'EXEC_JS', 'eval_browser_js': 'EXEC_JS',
+  'GET_SOURCE': 'GET_SOURCE', 'get_canvas_source': 'GET_SOURCE',
+  'SEARCH_LCSC': 'SEARCH_LCSC', 'search_lcsc_component': 'SEARCH_LCSC',
+  'ADD_WIRE': 'ADD_WIRE', 'add_wire': 'ADD_WIRE',
+  'ADD_LINE': 'ADD_LINE', 'add_line': 'ADD_LINE',
+  'UPDATE_NET_NAME': 'UPDATE_NET_NAME', 'update_net_name': 'UPDATE_NET_NAME',
+  'MOVE_OBJS_TO': 'MOVE_OBJS_TO', 'move_component': 'MOVE_OBJS_TO',
+  'MOVE_OBJS': 'MOVE_OBJS', 'move_components': 'MOVE_OBJS'
+};
+
+var BATCH_OP_TIMEOUT_MS = 30000;
+var _batch = null;
+
+function dispatch(msg) {
+  var action = msg.action && ACTION_ALIASES[msg.action];
+  if (!action) {
+    sendError(msg.req_id, 'unknown action: ' + msg.action);
+    return;
+  }
+  if (action === 'PLACE_LCSC')       handlePlaceLcsc(msg);
+  else if (action === 'EXEC_JS')     handleExecJs(msg);
+  else if (action === 'GET_SOURCE')  handleGetSource(msg);
+  else if (action === 'SEARCH_LCSC') handleSearchLcsc(msg);
+  else if (action === 'ADD_WIRE')    handleAddWire(msg);
+  else if (action === 'ADD_LINE')    handleAddLine(msg);
+  else if (action === 'UPDATE_NET_NAME') handleUpdateNetName(msg);
+  else if (action === 'MOVE_OBJS_TO')   handleMoveObjsTo(msg);
+  else if (action === 'MOVE_OBJS')      handleMoveObjs(msg);
+}
+
+function handleBatch(msg) {
+  var ops = (msg.args && msg.args.operations) || [];
+  log('BATCH: ' + ops.length + ' operation(s)');
+  if (!ops.length) {
+    sendResponse(msg.req_id, { results: [] });
+    return;
+  }
+  _batch = { reqId: msg.req_id, ops: ops, results: new Array(ops.length), index: -1, opIndex: -1, timer: null };
+  _batchNext();
+}
+
+function _batchClearTimer() {
+  if (_batch && _batch.timer) {
+    clearTimeout(_batch.timer);
+    _batch.timer = null;
+  }
+}
+
+// Record the result of the currently running batch op. Returns true when the
+// response completed a batch op (result stored in its slot, next op started).
+// Returns false when there is no active batch or the response is stale, i.e.
+// it belongs to an op that already finished or timed out - in that case it is
+// dropped so it can never corrupt the batch results nor leak a stray reply.
+function _batchRecord(status, data, error) {
+  if (!_batch) return false;
+  var idx = _batch.opIndex;
+  if (idx === -1 || idx !== _batch.index) return false;
+  _batchClearTimer();
+  _batch.results[idx] = (status === 'success')
+    ? { status: 'success', data: data }
+    : { status: 'error', error: String(error) };
+  _batchNext();
+  return true;
+}
+
+function _batchNext() {
+  if (!_batch) return;
+  _batchClearTimer();
+  _batch.index++;
+  if (_batch.index >= _batch.ops.length) {
+    var results = _batch.results;
+    var reqId = _batch.reqId;
+    _batch = null;
+    sendResponse(reqId, { results: results });
+    return;
+  }
+  var op = _batch.ops[_batch.index];
+  var subMsg = { req_id: _batch.reqId, action: op.action, args: op.args || {} };
+  _batch.opIndex = _batch.index;
+  log('BATCH #' + (_batch.index + 1) + '/' + _batch.ops.length + ': ' + op.action + ' ' + safeStr(op.args).substring(0, 200));
+  _batch.timer = setTimeout(function() {
+    if (!_batch || _batch.opIndex !== _batch.index) return;
+    _batch.results[_batch.index] = { status: 'error', error: 'batch op timeout after ' + (BATCH_OP_TIMEOUT_MS / 1000) + 's: ' + op.action };
+    _batchNext();
+  }, BATCH_OP_TIMEOUT_MS);
+  dispatch(subMsg);
+}
+
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
@@ -309,20 +496,11 @@ function connect() {
     try { msg = JSON.parse(event.data); } catch (e) { return; }
     log('Received action=' + msg.action + ' req_id=' + msg.req_id);
 
-    if (msg.action === 'PLACE_LCSC' && msg.req_id) {
-      handlePlaceLcsc(msg);
-    } else if (msg.action === 'EXEC_JS' && msg.req_id) {
-      handleExecJs(msg);
-    } else if (msg.action === 'GET_SOURCE' && msg.req_id) {
-      handleGetSource(msg);
-    } else if (msg.action === 'SEARCH_LCSC' && msg.req_id) {
-      handleSearchLcsc(msg);
-    } else if (msg.action === 'ADD_WIRE' && msg.req_id) {
-      handleAddWire(msg);
-    } else if (msg.action === 'ADD_LINE' && msg.req_id) {
-      handleAddLine(msg);
-    } else if (msg.action === 'UPDATE_NET_NAME' && msg.req_id) {
-      handleUpdateNetName(msg);
+    if (!msg || !msg.req_id || !msg.action) return;
+    if (msg.action === 'BATCH') {
+      handleBatch(msg);
+    } else {
+      dispatch(msg);
     }
   };
 

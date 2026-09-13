@@ -21,7 +21,7 @@ def _generate_req_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-async def _send_to_browser(action: str, args: Dict[str, Any]) -> Any:
+async def _send_to_browser(action: str, args: Dict[str, Any], timeout: float = 60.0) -> Any:
     if not _browser_connections:
         raise ConnectionError("EasyEDA browser tab not connected via WebSocket.")
 
@@ -42,7 +42,7 @@ async def _send_to_browser(action: str, args: Dict[str, Any]) -> Any:
     logger.info("Sent to browser: action=%s req_id=%s", action, req_id)
 
     try:
-        result = await asyncio.wait_for(future, timeout=60.0)
+        result = await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError:
         _pending_requests.pop(req_id, None)
         raise TimeoutError(f"Timed out waiting for browser response (req_id={req_id})")
@@ -152,18 +152,29 @@ async def search_lcsc_component(query: str) -> str:
 
 
 @mcp.tool()
-async def add_wire(x1: float, y1: float, x2: float, y2: float) -> str:
-    """Draw a schematic wire between two points.
+async def add_wire(x1: float | None = None, y1: float | None = None,
+                   x2: float | None = None, y2: float | None = None,
+                   points: list | None = None) -> str:
+    """Draw a REAL schematic wire between two points, or along a
+    multi-point polyline.
+
+    Uses the editor's importShape hook (c_etype="wire"), so the result is a
+    genuine electrically-connected net wire — NOT a cosmetic polyline.
 
     Args:
         x1: Start X-coordinate in EasyEDA internal pixels (1 px = 10 mil = 0.254 mm).
         y1: Start Y-coordinate.
         x2: End X-coordinate.
         y2: End Y-coordinate.
+        points: Optional list of points [[x,y], ...] or [{"x":..,"y":..}, ...]
+            to draw ONE polyline with all bends in a single call (much faster
+            than many two-point segments). When provided, x1/y1/x2/y2 are
+            ignored.
     """
-    result = await _send_to_browser("ADD_WIRE", {
-        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-    })
+    args = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+    if points is not None:
+        args["points"] = points
+    result = await _send_to_browser("ADD_WIRE", args)
     return json.dumps({"status": "success", "data": result})
 
 
@@ -200,6 +211,68 @@ async def update_net_name(gid: str, net_name: str) -> str:
         "gid": gid,
         "net_name": net_name,
     })
+    return json.dumps({"status": "success", "data": result})
+
+
+@mcp.tool()
+async def move_component(gid: str, x: float, y: float) -> str:
+    """Move a component to an absolute position on the EasyEDA schematic canvas.
+
+    Args:
+        gid: Global ID of the shape to move (e.g. "gge5").
+        x: Target X-coordinate in EasyEDA internal pixels (1 px = 10 mil = 0.254 mm).
+        y: Target Y-coordinate in EasyEDA internal pixels.
+    """
+    result = await _send_to_browser("MOVE_OBJS_TO", {
+        "gids": [gid],
+        "x": x,
+        "y": y,
+    })
+    return json.dumps({"status": "success", "data": result})
+
+
+@mcp.tool()
+async def move_components(gids: list, dx: float = 0, dy: float = 0) -> str:
+    """Move one or more components by a relative offset on the schematic canvas.
+
+    Args:
+        gids: List of gIds to move (each a component id like "gge5").
+        dx: Relative X-offset in EasyEDA internal pixels (1 px = 10 mil = 0.254 mm).
+        dy: Relative Y-offset in EasyEDA internal pixels.
+    """
+    result = await _send_to_browser("MOVE_OBJS", {
+        "gids": gids,
+        "dx": dx,
+        "dy": dy,
+    })
+    return json.dumps({"status": "success", "data": result})
+
+
+@mcp.tool()
+async def run_batch(operations: list) -> str:
+    """Execute a sequence of EasyEDA operations in order as a single batch.
+
+    Each operation is a dict: {"action": <action>, "args": {<args>}}.
+    Actions may be given as MCP tool names ("place_component", "add_wire",
+    "add_line", "update_net_name", "move_component", "move_components",
+    "get_canvas_source", "search_lcsc_component", "eval_browser_js") or raw
+    bridge actions ("PLACE_LCSC", "ADD_WIRE", "ADD_LINE", "UPDATE_NET_NAME",
+    "MOVE_OBJS_TO", "MOVE_OBJS", "GET_SOURCE", "SEARCH_LCSC", "EXEC_JS").
+
+    add_wire / ADD_WIRE creates a REAL wire via the editor's importShape hook
+    (c_etype="wire"), so it IS electrically connected — see AGENT_KNOWLEDGE_BASE.md
+    section 4b.
+
+    Operations run sequentially inside the browser (waiting for each to
+    finish before starting the next). Returns one result per operation in
+    order: {"status": "success", "data": ...} or
+    {"status": "error", "error": "..."}. A whole batch is a single WebSocket
+    round-trip, so it is much faster than repeated individual tool calls.
+
+    Args:
+        operations: List of operation dicts to execute in order.
+    """
+    result = await _send_to_browser("BATCH", {"operations": operations}, timeout=300.0)
     return json.dumps({"status": "success", "data": result})
 
 

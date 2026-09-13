@@ -87,8 +87,11 @@ Add the following to your Cursor MCP settings (`.cursor/mcp.json` or via the UI)
 | `get_canvas_source(type)` | Retrieve the full active EasyEDA document (json, compress, or svg) |
 | `search_lcsc_component(query)` | Search the LCSC/EasyEDA parts database by keyword or C-number |
 | `place_component(title, x, y)` | Place a schematic component on the canvas |
-| `add_wire(x1, y1, x2, y2)` | Draw a schematic wire between two points |
+| `add_wire(x1, y1, x2, y2[, points])` | Draw a REAL schematic wire (electrically connected) between two points or along a multi-point polyline |
 | `update_net_name(gid, net_name)` | Update the net assignment of a pad or track element |
+| `move_component(gid, x, y)` | Move a component to an absolute canvas position |
+| `move_components(gids, dx, dy)` | Move one or more components by a relative offset |
+| `run_batch(operations)` | Execute a sequence of operations in order with a single round-trip (see `AGENT_KNOWLEDGE_BASE.md` §6) |
 
 ## 5. Troubleshooting
 

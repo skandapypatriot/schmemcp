@@ -4,12 +4,13 @@
     "Always refer to AGENT_KNOWLEDGE_BASE.md and easyeda_standard_api_architectural_reference.md for rules on EasyEDA API calls.",
     "Do not guess EasyEDA shape properties—verify against AGENT_KNOWLEDGE_BASE.md first."
   ],
+  
   "mcp": {
     "easyeda-std": {
       "type": "local",
       "command": [
-        "C:\\Users\\Put_Ur_Name\\schmemcp\\mcpserverenv\\Scripts\\python.exe",
-        "C:\\Users\\Put_Ur_Name\\schmemcp\\bridge_server.py"
+        "C:\\Users\\annal\\schmemcp\\mcpserverenv\\Scripts\\python.exe",
+        "C:\\Users\\annal\\schmemcp\\bridge_server.py"
       ],
       "enabled": true
     }
